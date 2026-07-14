@@ -41,7 +41,7 @@ import {
 } from "recharts";
 
 // ---------------------------------------------------------------------------
-// Supabase REST API (без @supabase/supabase-js — лише fetch)
+// Supabase REST API
 // ---------------------------------------------------------------------------
 
 const SUPABASE_URL = "https://agurqtagivdnmrjnjnzr.supabase.co/rest/v1/";
@@ -58,12 +58,7 @@ async function fetchCategories() {
     `${SUPABASE_URL}categories?select=id,name,type,category_group`,
     { headers: supabaseHeaders }
   );
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(
-      `Помилка завантаження категорій (${response.status}): ${text}`
-    );
-  }
+  if (!response.ok) throw new Error("Помилка завантаження категорій");
   return response.json();
 }
 
@@ -72,64 +67,37 @@ async function fetchTransactions() {
     `${SUPABASE_URL}transactions?select=id,amount,transaction_date,category_id,note&order=transaction_date.desc`,
     { headers: supabaseHeaders }
   );
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(
-      `Помилка завантаження транзакцій (${response.status}): ${text}`
-    );
-  }
+  if (!response.ok) throw new Error("Помилка завантаження транзакцій");
   return response.json();
 }
 
-async function insertTransaction({
-  amount,
-  transaction_date,
-  category_id,
-  note,
-}) {
+async function insertTransaction({ amount, transaction_date, category_id, note }) {
   const response = await fetch(`${SUPABASE_URL}transactions`, {
     method: "POST",
-    headers: {
-      ...supabaseHeaders,
-      Prefer: "return=representation",
-    },
+    headers: { ...supabaseHeaders, Prefer: "return=representation" },
     body: JSON.stringify({ amount, transaction_date, category_id, note }),
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Помилка збереження (${response.status}): ${text}`);
-  }
+  if (!response.ok) throw new Error("Помилка збереження");
   const data = await response.json();
   return Array.isArray(data) ? data[0] : data;
 }
 
-// Нова функція: Оновлення транзакції
 async function updateTransaction(id, updates) {
   const response = await fetch(`${SUPABASE_URL}transactions?id=eq.${id}`, {
     method: "PATCH",
-    headers: {
-      ...supabaseHeaders,
-      Prefer: "return=representation",
-    },
+    headers: { ...supabaseHeaders, Prefer: "return=representation" },
     body: JSON.stringify(updates),
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Помилка оновлення (${response.status}): ${text}`);
-  }
+  if (!response.ok) throw new Error("Помилка оновлення");
   return response.json();
 }
 
-// Нова функція: Видалення транзакції
 async function deleteTransaction(id) {
   const response = await fetch(`${SUPABASE_URL}transactions?id=eq.${id}`, {
     method: "DELETE",
     headers: supabaseHeaders,
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Помилка видалення (${response.status}): ${text}`);
-  }
+  if (!response.ok) throw new Error("Помилка видалення");
 }
 
 // ---------------------------------------------------------------------------
@@ -138,14 +106,7 @@ async function deleteTransaction(id) {
 
 const VARIABLE_GROUP = "variable";
 
-const DONUT_COLORS = [
-  "#A7C4A0",
-  "#9FB8D8",
-  "#E3B88A",
-  "#D9C9A8",
-  "#B7CFC9",
-  "#D8B4A0",
-];
+const DONUT_COLORS = ["#A7C4A0", "#9FB8D8", "#E3B88A", "#D9C9A8", "#B7CFC9", "#D8B4A0"];
 
 const CATEGORY_ICONS = {
   "Ін'єкції": Syringe,
@@ -163,18 +124,8 @@ const CATEGORY_ICONS = {
 };
 
 const MONTH_NAMES_UK = [
-  "Січень",
-  "Лютий",
-  "Березень",
-  "Квітень",
-  "Травень",
-  "Червень",
-  "Липень",
-  "Серпень",
-  "Вересень",
-  "Жовтень",
-  "Листопад",
-  "Грудень",
+  "Січень", "Лютий", "Березень", "Квітень", "Травень", "Червень",
+  "Липень", "Серпень", "Вересень", "Жовтень", "Листопад", "Грудень",
 ];
 
 const formatMoney = (value) =>
@@ -197,36 +148,42 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [activeTab, setActiveTab] = useState("overview"); // 'overview' | 'analytics'
+  const [activeTab, setActiveTab] = useState("overview");
   const [selectedDate, setSelectedDate] = useState(new Date());
 
-  const [modalType, setModalType] = useState(null); // 'income' | 'expense' | null
-  
-  // Додано стан для редагування
+  const [modalType, setModalType] = useState(null);
   const [editingTransaction, setEditingTransaction] = useState(null);
-  
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [amountInput, setAmountInput] = useState("");
   const [noteInput, setNoteInput] = useState("");
   const [formError, setFormError] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  // -------------------------------------------------------------------------
-  // Завантаження категорій і транзакцій з Supabase (REST, через fetch)
-  // -------------------------------------------------------------------------
+  // Стан для лінивого рендеру (пагінації)
+  const [visibleCount, setVisibleCount] = useState(20);
+
+  // Скидаємо кількість видимих елементів при зміні місяця або вкладки
+  useEffect(() => {
+    setVisibleCount(20);
+  }, [selectedDate, activeTab]);
+
+  // Обробник скролу: якщо до кінця списку залишилось < 150px, рендеримо ще 20
+  const handleScroll = useCallback((e) => {
+    const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight + 150) {
+      setVisibleCount((prev) => prev + 20);
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [cats, txs] = await Promise.all([
-        fetchCategories(),
-        fetchTransactions(),
-      ]);
+      const [cats, txs] = await Promise.all([fetchCategories(), fetchTransactions()]);
       setCategories(cats || []);
       setTransactions(txs || []);
     } catch (err) {
-      setError(err.message || "Не вдалося завантажити дані з бази");
+      setError(err.message || "Не вдалося завантажити дані");
     } finally {
       setLoading(false);
     }
@@ -238,9 +195,7 @@ export default function Dashboard() {
 
   const categoryById = useMemo(() => {
     const map = {};
-    categories.forEach((c) => {
-      map[c.id] = c;
-    });
+    categories.forEach((c) => (map[c.id] = c));
     return map;
   }, [categories]);
 
@@ -253,18 +208,11 @@ export default function Dashboard() {
     [transactions, categoryById]
   );
 
-  // -------------------------------------------------------------------------
-  // Фільтрація по місяцях (за transaction_date)
-  // -------------------------------------------------------------------------
-
   const filterByMonth = (list, date) =>
     list.filter((t) => {
       if (!t.transaction_date) return false;
       const d = new Date(t.transaction_date);
-      return (
-        d.getMonth() === date.getMonth() &&
-        d.getFullYear() === date.getFullYear()
-      );
+      return d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear();
     });
 
   const monthTransactions = useMemo(
@@ -291,41 +239,22 @@ export default function Dashboard() {
     });
   };
 
-  // -------------------------------------------------------------------------
-  // Розрахунки — поточний місяць
-  // -------------------------------------------------------------------------
-
   const sumByType = (list, type) =>
-    list
-      .filter((t) => t.category?.type === type)
-      .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+    list.filter((t) => t.category?.type === type).reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
-  const totalIncome = useMemo(
-    () => sumByType(monthTransactions, "income"),
-    [monthTransactions]
-  );
-  const totalExpense = useMemo(
-    () => sumByType(monthTransactions, "expense"),
-    [monthTransactions]
-  );
+  const totalIncome = useMemo(() => sumByType(monthTransactions, "income"), [monthTransactions]);
+  const totalExpense = useMemo(() => sumByType(monthTransactions, "expense"), [monthTransactions]);
   const netProfit = totalIncome - totalExpense;
 
   const variableExpense = useMemo(
     () =>
       monthTransactions
-        .filter(
-          (t) =>
-            t.category?.type === "expense" &&
-            t.category?.category_group === VARIABLE_GROUP
-        )
+        .filter((t) => t.category?.type === "expense" && t.category?.category_group === VARIABLE_GROUP)
         .reduce((sum, t) => sum + Number(t.amount || 0), 0),
     [monthTransactions]
   );
 
-  const marginPct =
-    totalIncome > 0
-      ? ((totalIncome - variableExpense) / totalIncome) * 100
-      : null;
+  const marginPct = totalIncome > 0 ? ((totalIncome - variableExpense) / totalIncome) * 100 : null;
 
   const incomeDonutData = useMemo(() => {
     const grouped = {};
@@ -336,11 +265,7 @@ export default function Dashboard() {
         grouped[name] = (grouped[name] || 0) + Number(t.amount || 0);
       });
     return Object.entries(grouped)
-      .map(([name, amount], idx) => ({
-        name,
-        amount,
-        color: DONUT_COLORS[idx % DONUT_COLORS.length],
-      }))
+      .map(([name, amount], idx) => ({ name, amount, color: DONUT_COLORS[idx % DONUT_COLORS.length] }))
       .sort((a, b) => b.amount - a.amount);
   }, [monthTransactions]);
 
@@ -361,46 +286,31 @@ export default function Dashboard() {
   }, [monthTransactions]);
 
   const sortedTransactions = useMemo(
-    () =>
-      [...monthTransactions].sort(
-        (a, b) => new Date(b.transaction_date) - new Date(a.transaction_date)
-      ),
+    () => [...monthTransactions].sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date)),
     [monthTransactions]
   );
 
+  // Відрізаємо тільки ту кількість транзакцій, яку зараз видно на екрані
+  const displayedTransactions = useMemo(() => {
+    return sortedTransactions.slice(0, visibleCount);
+  }, [sortedTransactions, visibleCount]);
+
   const hasTransactions = monthTransactions.length > 0;
 
-  // -------------------------------------------------------------------------
-  // Аналітика — порівняння з попереднім місяцем
-  // -------------------------------------------------------------------------
-
-  const previousIncome = useMemo(
-    () => sumByType(previousMonthTransactions, "income"),
-    [previousMonthTransactions]
-  );
-
+  const previousIncome = useMemo(() => sumByType(previousMonthTransactions, "income"), [previousMonthTransactions]);
   const incomeChangePct = useMemo(() => {
     if (previousIncome === 0) return null;
     return ((totalIncome - previousIncome) / previousIncome) * 100;
   }, [totalIncome, previousIncome]);
 
-  // -------------------------------------------------------------------------
-  // Аналітика — тренд прибутку по днях (наростаючим підсумком)
-  // -------------------------------------------------------------------------
-
   const trendData = useMemo(() => {
     const byDay = {};
     monthTransactions.forEach((t) => {
       const day = new Date(t.transaction_date).getDate();
-      const signedAmount =
-        t.category?.type === "income" ? Number(t.amount) : -Number(t.amount);
+      const signedAmount = t.category?.type === "income" ? Number(t.amount) : -Number(t.amount);
       byDay[day] = (byDay[day] || 0) + signedAmount;
     });
-
-    const days = Object.keys(byDay)
-      .map(Number)
-      .sort((a, b) => a - b);
-
+    const days = Object.keys(byDay).map(Number).sort((a, b) => a - b);
     let cumulative = 0;
     return days.map((day) => {
       cumulative += byDay[day];
@@ -408,12 +318,8 @@ export default function Dashboard() {
     });
   }, [monthTransactions]);
 
-  // -------------------------------------------------------------------------
-  // Модальне вікно — збереження, редагування та видалення
-  // -------------------------------------------------------------------------
-
   const openModal = (type) => {
-    setEditingTransaction(null); // Скидаємо стан редагування
+    setEditingTransaction(null);
     setModalType(type);
     setSelectedCategoryId("");
     setAmountInput("");
@@ -428,7 +334,6 @@ export default function Dashboard() {
     setEditingTransaction(null);
   };
 
-  // Нова функція: відкриття модалки для редагування існуючої транзакції
   const startEdit = (tx) => {
     setEditingTransaction(tx);
     setModalType(tx.category?.type || "expense");
@@ -438,10 +343,7 @@ export default function Dashboard() {
     setFormError(null);
   };
 
-  const modalCategories = useMemo(
-    () => categories.filter((c) => c.type === modalType),
-    [categories, modalType]
-  );
+  const modalCategories = useMemo(() => categories.filter((c) => c.type === modalType), [categories, modalType]);
 
   const handleSave = async () => {
     if (!selectedCategoryId) {
@@ -466,27 +368,19 @@ export default function Dashboard() {
 
     try {
       if (editingTransaction) {
-        // Оновлюємо запис
-        await updateTransaction(editingTransaction.id, {
-          amount: payload.amount,
-          category_id: payload.category_id,
-          note: payload.note,
-        });
+        await updateTransaction(editingTransaction.id, payload);
       } else {
-        // Створюємо новий
         await insertTransaction(payload);
       }
-      
-      await loadData(); // Перезавантажуємо дані з сервера
+      await loadData();
       closeModal();
     } catch (err) {
-      setFormError(err.message || "Не вдалося зберегти операцію в базі");
+      setFormError(err.message || "Не вдалося зберегти операцію");
     } finally {
       setSaving(false);
     }
   };
 
-  // Нова функція: обробка видалення
   const handleDelete = async () => {
     if (!editingTransaction) return;
     if (!window.confirm("Ви дійсно хочете видалити цю операцію?")) return;
@@ -502,34 +396,21 @@ export default function Dashboard() {
     }
   };
 
-  // -------------------------------------------------------------------------
-  // Рендер
-  // -------------------------------------------------------------------------
-
   return (
-    <div className="relative max-w-md mx-auto h-screen overflow-y-auto bg-gray-50 text-gray-700 font-sans">
-      {/* Верхня панель */}
+    <div
+      className="relative max-w-md mx-auto h-screen overflow-y-auto bg-gray-50 text-gray-700 font-sans"
+      onScroll={handleScroll}
+    >
       <div className="flex items-center justify-between px-5 pt-6 pb-4">
-        <p className="text-base font-bold text-gray-800 tracking-tight">
-          Фінансовий дашборд
-        </p>
+        <p className="text-base font-bold text-gray-800 tracking-tight">Фінансовий дашборд</p>
         <div className="flex items-center gap-0.5 bg-white rounded-full shadow-sm px-1 py-1">
-          <button
-            onClick={() => shiftMonth(-1)}
-            className="w-7 h-7 flex items-center justify-center rounded-full transition-all hover:bg-gray-100"
-            aria-label="Попередній місяць"
-          >
+          <button onClick={() => shiftMonth(-1)} className="w-7 h-7 flex items-center justify-center rounded-full transition-all hover:bg-gray-100">
             <ChevronLeft size={14} className="text-gray-400" />
           </button>
           <span className="text-xs font-semibold text-gray-600 px-1 min-w-[92px] text-center">
-            {MONTH_NAMES_UK[selectedDate.getMonth()]}{" "}
-            {selectedDate.getFullYear()}
+            {MONTH_NAMES_UK[selectedDate.getMonth()]} {selectedDate.getFullYear()}
           </span>
-          <button
-            onClick={() => shiftMonth(1)}
-            className="w-7 h-7 flex items-center justify-center rounded-full transition-all hover:bg-gray-100"
-            aria-label="Наступний місяць"
-          >
+          <button onClick={() => shiftMonth(1)} className="w-7 h-7 flex items-center justify-center rounded-full transition-all hover:bg-gray-100">
             <ChevronRight size={14} className="text-gray-400" />
           </button>
         </div>
@@ -543,25 +424,19 @@ export default function Dashboard() {
 
       {loading ? (
         <div className="px-5">
-          <p className="text-sm text-gray-400 mb-4">
-            Завантаження даних з бази...
-          </p>
+          <p className="text-sm text-gray-400 mb-4">Завантаження даних з бази...</p>
           <div className="animate-pulse h-28 bg-gray-200 rounded-2xl mb-4" />
           <div className="animate-pulse h-12 bg-gray-200 rounded-2xl mb-4" />
           <div className="animate-pulse h-40 bg-gray-200 rounded-2xl mb-4" />
-          <div className="animate-pulse h-40 bg-gray-200 rounded-2xl" />
         </div>
       ) : (
         <>
-          {/* Перемикач вкладок */}
           <div className="px-5">
             <div className="flex bg-gray-100 rounded-2xl p-1">
               <button
                 onClick={() => setActiveTab("overview")}
                 className={`flex-1 text-sm font-bold py-2 rounded-xl transition-all ${
-                  activeTab === "overview"
-                    ? "bg-white text-gray-800 shadow-sm"
-                    : "text-gray-400 hover:text-gray-500"
+                  activeTab === "overview" ? "bg-white text-gray-800 shadow-sm" : "text-gray-400 hover:text-gray-500"
                 }`}
               >
                 Огляд
@@ -569,9 +444,7 @@ export default function Dashboard() {
               <button
                 onClick={() => setActiveTab("analytics")}
                 className={`flex-1 text-sm font-bold py-2 rounded-xl transition-all ${
-                  activeTab === "analytics"
-                    ? "bg-white text-gray-800 shadow-sm"
-                    : "text-gray-400 hover:text-gray-500"
+                  activeTab === "analytics" ? "bg-white text-gray-800 shadow-sm" : "text-gray-400 hover:text-gray-500"
                 }`}
               >
                 Аналітика
@@ -579,14 +452,9 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Головна карточка */}
           <div className="mx-5 mt-4 bg-neutral-900 rounded-2xl shadow-sm px-5 py-6">
-            <p className="text-neutral-400 text-xs uppercase tracking-wider">
-              Чистий прибуток
-            </p>
-            <p className="text-white text-4xl font-bold mt-1 tracking-tight">
-              {formatMoney(netProfit)}
-            </p>
+            <p className="text-neutral-400 text-xs uppercase tracking-wider">Чистий прибуток</p>
+            <p className="text-white text-4xl font-bold mt-1 tracking-tight">{formatMoney(netProfit)}</p>
 
             <div className="flex items-center gap-6 mt-5 pt-4 border-t border-neutral-700">
               <div className="flex items-center gap-2">
@@ -594,12 +462,8 @@ export default function Dashboard() {
                   <ArrowUpRight size={15} className="text-emerald-400" />
                 </div>
                 <div>
-                  <p className="text-neutral-400 text-[11px] leading-tight">
-                    Дохід
-                  </p>
-                  <p className="text-white text-sm font-bold leading-tight">
-                    {formatMoney(totalIncome)}
-                  </p>
+                  <p className="text-neutral-400 text-[11px] leading-tight">Дохід</p>
+                  <p className="text-white text-sm font-bold leading-tight">{formatMoney(totalIncome)}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -607,18 +471,13 @@ export default function Dashboard() {
                   <ArrowDownRight size={15} className="text-amber-400" />
                 </div>
                 <div>
-                  <p className="text-neutral-400 text-[11px] leading-tight">
-                    Витрати
-                  </p>
-                  <p className="text-white text-sm font-bold leading-tight">
-                    {formatMoney(totalExpense)}
-                  </p>
+                  <p className="text-neutral-400 text-[11px] leading-tight">Витрати</p>
+                  <p className="text-white text-sm font-bold leading-tight">{formatMoney(totalExpense)}</p>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Швидкі дії */}
           <div className="flex gap-3 px-5 mt-4">
             <button
               onClick={() => openModal("income")}
@@ -636,39 +495,21 @@ export default function Dashboard() {
             </button>
           </div>
 
-          {/* ---------------------------------------------------------- */}
-          {/* Вкладка «Огляд»                                            */}
-          {/* ---------------------------------------------------------- */}
           {activeTab === "overview" &&
             (hasTransactions ? (
               <>
                 {incomeDonutData.length > 0 && (
                   <div className="mx-5 mt-6 bg-white rounded-2xl shadow-sm p-4">
-                    <p className="text-sm font-bold text-gray-800">
-                      Структура доходу
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Хто приносить більше грошей
-                    </p>
+                    <p className="text-sm font-bold text-gray-800">Структура доходу</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Хто приносить більше грошей</p>
 
                     <div className="flex items-center mt-2">
                       <div className="w-28 h-28 shrink-0">
                         <ResponsiveContainer width="100%" height="100%">
                           <PieChart>
-                            <Pie
-                              data={incomeDonutData}
-                              dataKey="amount"
-                              nameKey="name"
-                              innerRadius={34}
-                              outerRadius={54}
-                              paddingAngle={3}
-                              stroke="none"
-                            >
+                            <Pie data={incomeDonutData} dataKey="amount" nameKey="name" innerRadius={34} outerRadius={54} paddingAngle={3} stroke="none">
                               {incomeDonutData.map((entry, idx) => (
-                                <Cell
-                                  key={`${entry.name}-${idx}`}
-                                  fill={entry.color}
-                                />
+                                <Cell key={`${entry.name}-${idx}`} fill={entry.color} />
                               ))}
                             </Pie>
                           </PieChart>
@@ -677,24 +518,13 @@ export default function Dashboard() {
 
                       <div className="flex-1 flex flex-col gap-2 pl-2">
                         {incomeDonutData.map((c) => (
-                          <div
-                            key={c.name}
-                            className="flex items-center justify-between"
-                          >
+                          <div key={c.name} className="flex items-center justify-between">
                             <div className="flex items-center gap-2 min-w-0">
-                              <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0"
-                                style={{ backgroundColor: c.color }}
-                              />
-                              <span className="text-xs text-gray-500 truncate">
-                                {c.name}
-                              </span>
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
+                              <span className="text-xs text-gray-500 truncate">{c.name}</span>
                             </div>
                             <span className="text-xs font-bold text-gray-800 pl-2">
-                              {totalIncome > 0
-                                ? Math.round((c.amount / totalIncome) * 100)
-                                : 0}
-                              %
+                              {totalIncome > 0 ? Math.round((c.amount / totalIncome) * 100) : 0}%
                             </span>
                           </div>
                         ))}
@@ -705,12 +535,8 @@ export default function Dashboard() {
 
                 {topExpenses.length > 0 && (
                   <div className="mx-5 mt-4 bg-white rounded-2xl shadow-sm p-4">
-                    <p className="text-sm font-bold text-gray-800">
-                      Топ-3 статті витрат
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Головні «поглиначі» бюджету
-                    </p>
+                    <p className="text-sm font-bold text-gray-800">Топ-3 статті витрат</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Головні «поглиначі» бюджету</p>
 
                     <div className="flex flex-col gap-3 mt-4">
                       {topExpenses.map((e) => {
@@ -720,19 +546,12 @@ export default function Dashboard() {
                             <div className="flex items-center justify-between mb-1.5">
                               <div className="flex items-center gap-1.5">
                                 <Icon size={13} className="text-amber-600" />
-                                <span className="text-xs font-medium text-gray-600">
-                                  {e.name}
-                                </span>
+                                <span className="text-xs font-medium text-gray-600">{e.name}</span>
                               </div>
-                              <span className="text-xs font-bold text-gray-800">
-                                {formatMoney(e.amount)}
-                              </span>
+                              <span className="text-xs font-bold text-gray-800">{formatMoney(e.amount)}</span>
                             </div>
                             <div className="w-full h-2 bg-amber-50 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-amber-400 rounded-full transition-all"
-                                style={{ width: `${e.pct}%` }}
-                              />
+                              <div className="h-full bg-amber-400 rounded-full transition-all" style={{ width: `${e.pct}%` }} />
                             </div>
                           </div>
                         );
@@ -742,75 +561,34 @@ export default function Dashboard() {
                 )}
 
                 <div className="mx-5 mt-4 mb-8 bg-white rounded-2xl shadow-sm">
-                  <p className="text-sm font-bold text-gray-800 px-4 pt-4">
-                    Останні операції
-                  </p>
+                  <p className="text-sm font-bold text-gray-800 px-4 pt-4">Останні операції</p>
 
                   <div className="flex flex-col mt-1">
-                    {sortedTransactions.map((t, idx) => {
+                    {displayedTransactions.map((t, idx) => {
                       const name = t.category?.name || "Без категорії";
                       const Icon = CATEGORY_ICONS[name] || Receipt;
                       const isIncome = t.category?.type === "income";
                       return (
-                        <div
-                          key={t.id}
-                          className={`flex items-center justify-between px-4 py-3 ${
-                            idx !== sortedTransactions.length - 1
-                              ? "border-b border-gray-100"
-                              : ""
-                          }`}
-                        >
+                        <div key={t.id} className={`flex items-center justify-between px-4 py-3 ${idx !== displayedTransactions.length - 1 ? "border-b border-gray-100" : ""}`}>
                           <div className="flex items-center gap-3 min-w-0">
-                            <div
-                              className={`w-9 h-9 flex items-center justify-center rounded-full shrink-0 ${
-                                isIncome ? "bg-emerald-50" : "bg-amber-50"
-                              }`}
-                            >
-                              <Icon
-                                size={16}
-                                className={
-                                  isIncome
-                                    ? "text-emerald-600"
-                                    : "text-amber-600"
-                                }
-                              />
+                            <div className={`w-9 h-9 flex items-center justify-center rounded-full shrink-0 ${isIncome ? "bg-emerald-50" : "bg-amber-50"}`}>
+                              <Icon size={16} className={isIncome ? "text-emerald-600" : "text-amber-600"} />
                             </div>
                             <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-800 truncate">
-                                {name}
-                              </p>
+                              <p className="text-sm font-medium text-gray-800 truncate">{name}</p>
                               <div className="flex items-center gap-1.5 min-w-0">
-                                {t.note && (
-                                  <span className="text-[11px] text-gray-400 truncate max-w-[120px]">
-                                    {t.note}
-                                  </span>
-                                )}
-                                {t.note && (
-                                  <span className="text-[11px] text-gray-300">
-                                    •
-                                  </span>
-                                )}
-                                <span className="text-[11px] text-gray-400 shrink-0">
-                                  {formatShortDate(t.transaction_date)}
-                                </span>
+                                {t.note && <span className="text-[11px] text-gray-400 truncate max-w-[120px]">{t.note}</span>}
+                                {t.note && <span className="text-[11px] text-gray-300">•</span>}
+                                <span className="text-[11px] text-gray-400 shrink-0">{formatShortDate(t.transaction_date)}</span>
                               </div>
                             </div>
                           </div>
-                          
-                          {/* Додано блок з сумою та кнопкою редагування */}
                           <div className="flex items-center gap-3 pl-2">
-                            <span
-                              className={`text-sm font-bold shrink-0 ${
-                                isIncome ? "text-emerald-600" : "text-amber-600"
-                              }`}
-                            >
+                            <span className={`text-sm font-bold shrink-0 ${isIncome ? "text-emerald-600" : "text-amber-600"}`}>
                               {isIncome ? "+" : "−"}
                               {formatMoney(t.amount)}
                             </span>
-                            <button
-                              onClick={() => startEdit(t)}
-                              className="p-1.5 text-gray-400 hover:text-gray-800 transition-colors bg-gray-50 hover:bg-gray-100 rounded-full"
-                            >
+                            <button onClick={() => startEdit(t)} className="p-1.5 text-gray-400 hover:text-gray-800 transition-colors bg-gray-50 hover:bg-gray-100 rounded-full">
                               <Edit2 size={14} />
                             </button>
                           </div>
@@ -825,66 +603,32 @@ export default function Dashboard() {
                 <div className="w-14 h-14 flex items-center justify-center bg-gray-50 rounded-full mb-4">
                   <Wallet size={26} className="text-gray-300" />
                 </div>
-                <p className="text-sm font-bold text-gray-700">
-                  Почніть вести облік
-                </p>
-                <p className="text-xs text-gray-400 mt-1.5 max-w-[220px]">
-                  Додайте свою першу операцію — і тут з'являться графіки та
-                  статистика
-                </p>
+                <p className="text-sm font-bold text-gray-700">Почніть вести облік</p>
+                <p className="text-xs text-gray-400 mt-1.5 max-w-[220px]">Додайте свою першу операцію — і тут з'являться графіки та статистика</p>
               </div>
             ))}
 
-          {/* ---------------------------------------------------------- */}
-          {/* Вкладка «Аналітика»                                        */}
-          {/* ---------------------------------------------------------- */}
           {activeTab === "analytics" && (
             <div className="mt-6 mb-8">
               <div className="mx-5 bg-white rounded-2xl shadow-sm p-4">
-                <p className="text-sm font-bold text-gray-800">
-                  Дохід у порівнянні
-                </p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {MONTH_NAMES_UK[selectedDate.getMonth()]} проти{" "}
-                  {MONTH_NAMES_UK[previousMonthDate.getMonth()]}
-                </p>
+                <p className="text-sm font-bold text-gray-800">Дохід у порівнянні</p>
+                <p className="text-xs text-gray-400 mt-0.5">{MONTH_NAMES_UK[selectedDate.getMonth()]} проти {MONTH_NAMES_UK[previousMonthDate.getMonth()]}</p>
 
                 <div className="flex items-center justify-between mt-4">
                   <div>
-                    <p className="text-2xl font-bold text-gray-800">
-                      {formatMoney(totalIncome)}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Минулого місяця: {formatMoney(previousIncome)}
-                    </p>
+                    <p className="text-2xl font-bold text-gray-800">{formatMoney(totalIncome)}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Минулого місяця: {formatMoney(previousIncome)}</p>
                   </div>
 
                   {incomeChangePct === null ? (
                     <div className="flex items-center gap-1 bg-gray-50 rounded-full px-3 py-1.5">
-                      <span className="text-xs font-semibold text-gray-400">
-                        Немає даних
-                      </span>
+                      <span className="text-xs font-semibold text-gray-400">Немає даних</span>
                     </div>
                   ) : (
-                    <div
-                      className={`flex items-center gap-1 rounded-full px-3 py-1.5 ${
-                        incomeChangePct >= 0 ? "bg-emerald-50" : "bg-amber-50"
-                      }`}
-                    >
-                      {incomeChangePct >= 0 ? (
-                        <TrendingUp size={14} className="text-emerald-600" />
-                      ) : (
-                        <TrendingDown size={14} className="text-amber-600" />
-                      )}
-                      <span
-                        className={`text-xs font-bold ${
-                          incomeChangePct >= 0
-                            ? "text-emerald-600"
-                            : "text-amber-600"
-                        }`}
-                      >
-                        {incomeChangePct >= 0 ? "+" : ""}
-                        {incomeChangePct.toFixed(1)}%
+                    <div className={`flex items-center gap-1 rounded-full px-3 py-1.5 ${incomeChangePct >= 0 ? "bg-emerald-50" : "bg-amber-50"}`}>
+                      {incomeChangePct >= 0 ? <TrendingUp size={14} className="text-emerald-600" /> : <TrendingDown size={14} className="text-amber-600" />}
+                      <span className={`text-xs font-bold ${incomeChangePct >= 0 ? "text-emerald-600" : "text-amber-600"}`}>
+                        {incomeChangePct >= 0 ? "+" : ""}{incomeChangePct.toFixed(1)}%
                       </span>
                     </div>
                   )}
@@ -894,91 +638,38 @@ export default function Dashboard() {
               <div className="mx-5 mt-4 bg-white rounded-2xl shadow-sm p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-bold text-gray-800">
-                      Маржинальність процедур
-                    </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      (Дохід − змінні витрати) / Дохід
-                    </p>
+                    <p className="text-sm font-bold text-gray-800">Маржинальність процедур</p>
+                    <p className="text-xs text-gray-400 mt-0.5">(Дохід − змінні витрати) / Дохід</p>
                   </div>
                   <div className="w-9 h-9 flex items-center justify-center bg-sky-50 rounded-full shrink-0">
                     <Percent size={16} className="text-sky-600" />
                   </div>
                 </div>
 
-                <p className="text-3xl font-bold text-gray-800 mt-4">
-                  {marginPct === null ? "—" : `${marginPct.toFixed(1)}%`}
-                </p>
+                <p className="text-3xl font-bold text-gray-800 mt-4">{marginPct === null ? "—" : `${marginPct.toFixed(1)}%`}</p>
                 {marginPct !== null && (
                   <div className="w-full h-2 bg-sky-50 rounded-full overflow-hidden mt-3">
-                    <div
-                      className="h-full bg-sky-400 rounded-full transition-all"
-                      style={{
-                        width: `${Math.max(0, Math.min(100, marginPct))}%`,
-                      }}
-                    />
+                    <div className="h-full bg-sky-400 rounded-full transition-all" style={{ width: `${Math.max(0, Math.min(100, marginPct))}%` }} />
                   </div>
                 )}
-                <p className="text-[11px] text-gray-400 mt-2">
-                  Змінні витрати: {formatMoney(variableExpense)}
-                </p>
+                <p className="text-[11px] text-gray-400 mt-2">Змінні витрати: {formatMoney(variableExpense)}</p>
               </div>
 
               <div className="mx-5 mt-4 bg-white rounded-2xl shadow-sm p-4">
-                <p className="text-sm font-bold text-gray-800">
-                  Тренд прибутку
-                </p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Наростаючим підсумком за{" "}
-                  {MONTH_NAMES_UK[selectedDate.getMonth()].toLowerCase()}
-                </p>
+                <p className="text-sm font-bold text-gray-800">Тренд прибутку</p>
+                <p className="text-xs text-gray-400 mt-0.5">Наростаючим підсумком за {MONTH_NAMES_UK[selectedDate.getMonth()].toLowerCase()}</p>
 
                 {trendData.length === 0 ? (
-                  <p className="text-xs text-gray-400 mt-6 mb-2">
-                    Немає операцій за цей місяць
-                  </p>
+                  <p className="text-xs text-gray-400 mt-6 mb-2">Немає операцій за цей місяць</p>
                 ) : (
                   <div className="h-40 mt-3 -ml-2">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={trendData}
-                        margin={{ top: 8, right: 12, bottom: 0, left: 0 }}
-                      >
+                      <LineChart data={trendData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                         <CartesianGrid stroke="#F3F4F6" vertical={false} />
-                        <XAxis
-                          dataKey="day"
-                          tick={{ fontSize: 10, fill: "#9CA3AF" }}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 10, fill: "#9CA3AF" }}
-                          axisLine={false}
-                          tickLine={false}
-                          width={44}
-                          tickFormatter={(v) => `${Math.round(v / 1000)}k`}
-                        />
-                        <Tooltip
-                          formatter={(value) => [
-                            formatMoney(value),
-                            "Прибуток",
-                          ]}
-                          labelFormatter={(label) => `День ${label}`}
-                          contentStyle={{
-                            borderRadius: 12,
-                            border: "none",
-                            boxShadow: "0 2px 10px rgba(0,0,0,0.08)",
-                            fontSize: 12,
-                          }}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="profit"
-                          stroke="#9FB8D8"
-                          strokeWidth={2.5}
-                          dot={{ r: 3, fill: "#9FB8D8", strokeWidth: 0 }}
-                          activeDot={{ r: 5 }}
-                        />
+                        <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fontSize: 10, fill: "#9CA3AF" }} axisLine={false} tickLine={false} width={44} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
+                        <Tooltip formatter={(value) => [formatMoney(value), "Прибуток"]} labelFormatter={(label) => `День ${label}`} contentStyle={{ borderRadius: 12, border: "none", boxShadow: "0 2px 10px rgba(0,0,0,0.08)", fontSize: 12 }} />
+                        <Line type="monotone" dataKey="profit" stroke="#9FB8D8" strokeWidth={2.5} dot={{ r: 3, fill: "#9FB8D8", strokeWidth: 0 }} activeDot={{ r: 5 }} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -989,94 +680,48 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* Модальне вікно введення операції */}
       {modalType && (
         <div className="absolute inset-0 bg-white flex flex-col">
           <div className="flex items-center justify-between px-5 pt-6 pb-4 border-b border-gray-100">
             <p className="text-base font-bold text-gray-800">
-              {editingTransaction 
-                ? "Редагувати запис" 
-                : modalType === "income" ? "Новий дохід" : "Нова витрата"}
+              {editingTransaction ? "Редагувати запис" : modalType === "income" ? "Новий дохід" : "Нова витрата"}
             </p>
-            <button
-              onClick={closeModal}
-              className="w-9 h-9 flex items-center justify-center bg-gray-50 rounded-full transition-all hover:bg-gray-100"
-              aria-label="Закрити"
-            >
+            <button onClick={closeModal} className="w-9 h-9 flex items-center justify-center bg-gray-50 rounded-full transition-all hover:bg-gray-100">
               <X size={17} className="text-gray-500" />
             </button>
           </div>
 
           <div className="flex-1 px-5 py-5 flex flex-col gap-5">
             <div>
-              <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Категорія
-              </label>
-              <select
-                value={selectedCategoryId}
-                onChange={(e) => setSelectedCategoryId(e.target.value)}
-                className="mt-2 w-full border border-gray-200 rounded-xl px-3.5 py-3 text-sm bg-white text-gray-800 transition-all focus:outline-none focus:border-gray-400"
-              >
+              <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">Категорія</label>
+              <select value={selectedCategoryId} onChange={(e) => setSelectedCategoryId(e.target.value)} className="mt-2 w-full border border-gray-200 rounded-xl px-3.5 py-3 text-sm bg-white text-gray-800 transition-all focus:outline-none focus:border-gray-400">
                 <option value="">Оберіть категорію</option>
                 {modalCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
+                  <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Сума, ₴
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={amountInput}
-                onChange={(e) => setAmountInput(e.target.value)}
-                placeholder="0"
-                className="mt-2 w-full border border-gray-200 rounded-xl px-3.5 py-3 text-sm bg-white text-gray-800 transition-all focus:outline-none focus:border-gray-400"
-              />
+              <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">Сума, ₴</label>
+              <input type="number" min="0" step="0.01" value={amountInput} onChange={(e) => setAmountInput(e.target.value)} placeholder="0" className="mt-2 w-full border border-gray-200 rounded-xl px-3.5 py-3 text-sm bg-white text-gray-800 transition-all focus:outline-none focus:border-gray-400" />
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                Нотатка (необов'язково)
-              </label>
-              <input
-                type="text"
-                value={noteInput}
-                onChange={(e) => setNoteInput(e.target.value)}
-                placeholder="Наприклад, ім'я клієнта"
-                className="mt-2 w-full border border-gray-200 rounded-xl px-3.5 py-3 text-sm bg-white text-gray-800 transition-all focus:outline-none focus:border-gray-400"
-              />
+              <label className="text-xs font-medium text-gray-400 uppercase tracking-wider">Нотатка (необов'язково)</label>
+              <input type="text" value={noteInput} onChange={(e) => setNoteInput(e.target.value)} placeholder="Наприклад, ім'я клієнта" className="mt-2 w-full border border-gray-200 rounded-xl px-3.5 py-3 text-sm bg-white text-gray-800 transition-all focus:outline-none focus:border-gray-400" />
             </div>
 
             {formError && <p className="text-xs text-red-500">{formError}</p>}
           </div>
 
           <div className="px-5 pb-6 flex flex-col gap-3">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className={`w-full text-white rounded-2xl py-3.5 text-sm font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100 ${
-                modalType === "income"
-                  ? "bg-emerald-600 hover:bg-emerald-700"
-                  : "bg-amber-600 hover:bg-amber-700"
-              }`}
-            >
+            <button onClick={handleSave} disabled={saving} className={`w-full text-white rounded-2xl py-3.5 text-sm font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100 ${modalType === "income" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-amber-600 hover:bg-amber-700"}`}>
               {saving ? "Збереження..." : "Зберегти"}
             </button>
             
-            {/* Кнопка видалення (показується тільки при редагуванні) */}
             {editingTransaction && (
-              <button
-                onClick={handleDelete}
-                disabled={saving}
-                className="w-full text-red-500 bg-red-50 hover:bg-red-100 rounded-2xl py-3.5 text-sm font-bold transition-all disabled:opacity-50"
-              >
+              <button onClick={handleDelete} disabled={saving} className="w-full text-red-500 bg-red-50 hover:bg-red-100 rounded-2xl py-3.5 text-sm font-bold transition-all disabled:opacity-50">
                 Видалити операцію
               </button>
             )}
