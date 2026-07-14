@@ -25,6 +25,7 @@ import {
   TrendingUp,
   TrendingDown,
   Percent,
+  Edit2,
 } from "lucide-react";
 import {
   PieChart,
@@ -52,9 +53,6 @@ const supabaseHeaders = {
   "Content-Type": "application/json",
 };
 
-// transactions.category_id — це зовнішній ключ на таблицю categories.
-// Щоб показувати назву/тип категорії (дохід чи витрата), а не «сирий» id,
-// категорії підвантажуються окремим запитом і використовуються для мапінгу.
 async function fetchCategories() {
   const response = await fetch(
     `${SUPABASE_URL}categories?select=id,name,type,category_group`,
@@ -105,15 +103,41 @@ async function insertTransaction({
   return Array.isArray(data) ? data[0] : data;
 }
 
+// Нова функція: Оновлення транзакції
+async function updateTransaction(id, updates) {
+  const response = await fetch(`${SUPABASE_URL}transactions?id=eq.${id}`, {
+    method: "PATCH",
+    headers: {
+      ...supabaseHeaders,
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Помилка оновлення (${response.status}): ${text}`);
+  }
+  return response.json();
+}
+
+// Нова функція: Видалення транзакції
+async function deleteTransaction(id) {
+  const response = await fetch(`${SUPABASE_URL}transactions?id=eq.${id}`, {
+    method: "DELETE",
+    headers: supabaseHeaders,
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Помилка видалення (${response.status}): ${text}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Константи оформлення
 // ---------------------------------------------------------------------------
 
-// Класифікація витрат для розрахунку маржинальності:
-// змінні — напряму пов'язані з виконанням процедур.
 const VARIABLE_GROUP = "variable";
 
-// Пастельна палітра для Donut Chart
 const DONUT_COLORS = [
   "#A7C4A0",
   "#9FB8D8",
@@ -123,8 +147,6 @@ const DONUT_COLORS = [
   "#D8B4A0",
 ];
 
-// Іконки за назвою категорії — для «читабельного» списку операцій.
-// Якщо назва категорії з бази не знайдена в мапі — використовується Receipt.
 const CATEGORY_ICONS = {
   "Ін'єкції": Syringe,
   Догляди: Sparkles,
@@ -179,6 +201,10 @@ export default function Dashboard() {
   const [selectedDate, setSelectedDate] = useState(new Date());
 
   const [modalType, setModalType] = useState(null); // 'income' | 'expense' | null
+  
+  // Додано стан для редагування
+  const [editingTransaction, setEditingTransaction] = useState(null);
+  
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
   const [amountInput, setAmountInput] = useState("");
   const [noteInput, setNoteInput] = useState("");
@@ -218,7 +244,6 @@ export default function Dashboard() {
     return map;
   }, [categories]);
 
-  // Транзакції, збагачені даними категорії (назва/тип/група) для зручності рендеру
   const enrichedTransactions = useMemo(
     () =>
       transactions.map((t) => ({
@@ -384,10 +409,11 @@ export default function Dashboard() {
   }, [monthTransactions]);
 
   // -------------------------------------------------------------------------
-  // Модальне вікно — збереження в Supabase через fetch (POST)
+  // Модальне вікно — збереження, редагування та видалення
   // -------------------------------------------------------------------------
 
   const openModal = (type) => {
+    setEditingTransaction(null); // Скидаємо стан редагування
     setModalType(type);
     setSelectedCategoryId("");
     setAmountInput("");
@@ -398,6 +424,17 @@ export default function Dashboard() {
   const closeModal = () => {
     if (saving) return;
     setModalType(null);
+    setFormError(null);
+    setEditingTransaction(null);
+  };
+
+  // Нова функція: відкриття модалки для редагування існуючої транзакції
+  const startEdit = (tx) => {
+    setEditingTransaction(tx);
+    setModalType(tx.category?.type || "expense");
+    setSelectedCategoryId(tx.category_id);
+    setAmountInput(Math.abs(tx.amount).toString());
+    setNoteInput(tx.note || "");
     setFormError(null);
   };
 
@@ -422,21 +459,45 @@ export default function Dashboard() {
 
     const payload = {
       amount: amountValue,
-      transaction_date: new Date().toISOString().slice(0, 10),
+      transaction_date: editingTransaction ? editingTransaction.transaction_date : new Date().toISOString().slice(0, 10),
       category_id: selectedCategoryId,
       note: noteInput.trim() || null,
     };
 
     try {
-      const saved = await insertTransaction(payload);
-      setTransactions((prev) => [
-        saved || { id: Date.now(), ...payload },
-        ...prev,
-      ]);
-      setModalType(null);
+      if (editingTransaction) {
+        // Оновлюємо запис
+        await updateTransaction(editingTransaction.id, {
+          amount: payload.amount,
+          category_id: payload.category_id,
+          note: payload.note,
+        });
+      } else {
+        // Створюємо новий
+        await insertTransaction(payload);
+      }
+      
+      await loadData(); // Перезавантажуємо дані з сервера
+      closeModal();
     } catch (err) {
       setFormError(err.message || "Не вдалося зберегти операцію в базі");
     } finally {
+      setSaving(false);
+    }
+  };
+
+  // Нова функція: обробка видалення
+  const handleDelete = async () => {
+    if (!editingTransaction) return;
+    if (!window.confirm("Ви дійсно хочете видалити цю операцію?")) return;
+
+    setSaving(true);
+    try {
+      await deleteTransaction(editingTransaction.id);
+      await loadData();
+      closeModal();
+    } catch (err) {
+      setFormError(err.message || "Не вдалося видалити операцію");
       setSaving(false);
     }
   };
@@ -576,7 +637,7 @@ export default function Dashboard() {
           </div>
 
           {/* ---------------------------------------------------------- */}
-          {/* Вкладка «Огляд»                                             */}
+          {/* Вкладка «Огляд»                                            */}
           {/* ---------------------------------------------------------- */}
           {activeTab === "overview" &&
             (hasTransactions ? (
@@ -735,14 +796,24 @@ export default function Dashboard() {
                               </div>
                             </div>
                           </div>
-                          <span
-                            className={`text-sm font-bold shrink-0 pl-2 ${
-                              isIncome ? "text-emerald-600" : "text-amber-600"
-                            }`}
-                          >
-                            {isIncome ? "+" : "−"}
-                            {formatMoney(t.amount)}
-                          </span>
+                          
+                          {/* Додано блок з сумою та кнопкою редагування */}
+                          <div className="flex items-center gap-3 pl-2">
+                            <span
+                              className={`text-sm font-bold shrink-0 ${
+                                isIncome ? "text-emerald-600" : "text-amber-600"
+                              }`}
+                            >
+                              {isIncome ? "+" : "−"}
+                              {formatMoney(t.amount)}
+                            </span>
+                            <button
+                              onClick={() => startEdit(t)}
+                              className="p-1.5 text-gray-400 hover:text-gray-800 transition-colors bg-gray-50 hover:bg-gray-100 rounded-full"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -923,7 +994,9 @@ export default function Dashboard() {
         <div className="absolute inset-0 bg-white flex flex-col">
           <div className="flex items-center justify-between px-5 pt-6 pb-4 border-b border-gray-100">
             <p className="text-base font-bold text-gray-800">
-              {modalType === "income" ? "Новий дохід" : "Нова витрата"}
+              {editingTransaction 
+                ? "Редагувати запис" 
+                : modalType === "income" ? "Новий дохід" : "Нова витрата"}
             </p>
             <button
               onClick={closeModal}
@@ -984,7 +1057,7 @@ export default function Dashboard() {
             {formError && <p className="text-xs text-red-500">{formError}</p>}
           </div>
 
-          <div className="px-5 pb-6">
+          <div className="px-5 pb-6 flex flex-col gap-3">
             <button
               onClick={handleSave}
               disabled={saving}
@@ -996,6 +1069,17 @@ export default function Dashboard() {
             >
               {saving ? "Збереження..." : "Зберегти"}
             </button>
+            
+            {/* Кнопка видалення (показується тільки при редагуванні) */}
+            {editingTransaction && (
+              <button
+                onClick={handleDelete}
+                disabled={saving}
+                className="w-full text-red-500 bg-red-50 hover:bg-red-100 rounded-2xl py-3.5 text-sm font-bold transition-all disabled:opacity-50"
+              >
+                Видалити операцію
+              </button>
+            )}
           </div>
         </div>
       )}
